@@ -73,7 +73,19 @@ def create_activate_env():
 
 
 def install_requirement():
-    pass
+    pip_path = str(Path("/usr/bin/pip3").resolve())
+    requirement_file_path = CONFIG_DIR / "requirements.txt"
+    if not requirement_file_path.exists():
+        error_msg = "requirements.txt file does not exist"
+        raise FileNotFoundError(error_msg)
+    try:
+        subprocess.run(
+            [pip_path, "install", "-r", str(requirement_file_path.resolve())],
+            check=True,
+        )
+        logger.info("Package installed successfully 🚀")
+    except subprocess.CalledProcessError as exc:
+        logger.error("Failed to install python packages: %s", exc, exc_info=1)
 
 
 def setup_apache_config():
