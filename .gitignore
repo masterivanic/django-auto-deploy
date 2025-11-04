@@ -218,6 +218,7 @@ __marimo__/
 local_settings.py
 development_settings.py
 *.egg-info
+*.conf
 .project
 .pydevproject
 .settings

@@ -1,0 +1,3 @@
+- Develop an apache configuration parser (Optional)
+- create a store to save all action status
+- schedule deployment action

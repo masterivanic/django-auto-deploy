@@ -165,6 +165,7 @@ ignore = [
   "S311", # ignore Standard pseudo-random generators because they are not used for cryptographic purposes
   "S603", # ignore shell subprocess malicious attack because all commmand made here are not risk
   "INP001", # ignore package because in management folder not need to declare as a package, it's a django cli 
+  "E501", 
 ]
 
 [lint.flake8-tidy-imports]
