@@ -1,7 +1,9 @@
+import getpass
 import logging
 import subprocess
 from pathlib import Path
 from sys import platform
+from typing import Union
 
 import tomli_w
 from django.conf import settings
@@ -9,8 +11,11 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR: Path = settings.BASE_DIR / "config"
-PYTHON_ENV_PATH = Path("/env")
-SYSTEM_PATH = Path("/etc/systemd/system")
+PYTHON_ENV_PATH: Path = Path("/env")
+SYSTEM_PATH: Path = Path("/etc/systemd/system")
+UNIX_USER: str = getpass.getuser()
+BASE_DIR = str(settings.BASE_DIR)
+
 
 if platform not in ("linux", "linux2"):
     error_msg = "Your system is not yet supported"
@@ -21,6 +26,27 @@ def check_deploy_settings():
     if not hasattr(settings, "DJANGO_PORT"):
         error_msg = "DJANGO_PORT must be set"
         raise ValueError(error_msg)
+
+
+def get_unix_group():
+    group = {}
+    import grp
+    import pwd
+
+    for p in pwd.getpwall():
+        group[p[0]] = grp.getgrgid(p[3])[0]
+    return group
+
+
+try:
+    UNIX_GROUP = get_unix_group()[UNIX_USER]
+except KeyError:
+    UNIX_GROUP = None
+
+try:
+    DJANGO_PROJECT_NAME = settings.ROOT_URLCONF.split(".")[0]
+except AttributeError:
+    DJANGO_PROJECT_NAME = None
 
 
 def config_hypercorn():
@@ -94,10 +120,10 @@ def install_requirement():
 
 
 def hypercorn_service(
-    project_path: str,
-    application_name: str,
-    unix_user: str,
-    unix_group: str,
+    django_project_name: Union[str, None] = DJANGO_PROJECT_NAME,
+    unix_group: str = UNIX_GROUP,
+    unix_user: str = UNIX_USER,
+    project_path: str = BASE_DIR,
 ):
     hypercorn_path = PYTHON_ENV_PATH / "bin" / "hypercorn"
     hypercorn_conf_path = SYSTEM_PATH / "hypercorn.service"
@@ -112,7 +138,7 @@ def hypercorn_service(
         User={unix_user}
         Group={unix_group}
         WorkingDirectory={project_path}
-        ExecStart={hypercorn_path} {application_name}.asgi:application --config config/hypercorn.toml
+        ExecStart={hypercorn_path} {django_project_name}.asgi:application --config config/hypercorn.toml
 
         [Install]
         WantedBy=multi-user.target
@@ -124,4 +150,8 @@ def hypercorn_service(
 
 
 def setup_health_cron_tab():
+    pass
+
+
+def sanity_check():
     pass
