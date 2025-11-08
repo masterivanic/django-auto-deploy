@@ -7,6 +7,7 @@ from typing import Union
 
 import tomli_w
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -154,4 +155,13 @@ def setup_health_cron_tab():
 
 
 def sanity_check():
-    pass
+    import requests
+
+    if len(settings.ALLOWED_HOSTS) == 0:
+        error_msg = "Your system is not yet supported"
+        raise ImproperlyConfigured(error_msg)
+    for url in settings.ALLOWED_HOSTS:
+        response = requests.options(url, timeout=10)
+        if response.ok:
+            return 1
+    return 0
