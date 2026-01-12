@@ -1,7 +1,10 @@
+import contextlib
 import getpass
 import logging
+import pwd
 import subprocess
 from pathlib import Path
+from subprocess import CalledProcessError, check_call
 from sys import platform
 from typing import Union
 
@@ -12,10 +15,13 @@ from django.core.exceptions import ImproperlyConfigured
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR: Path = settings.BASE_DIR / "config"
-PYTHON_ENV_PATH: Path = Path("/env")
 SYSTEM_PATH: Path = Path("/etc/systemd/system")
 UNIX_USER: str = getpass.getuser()
 BASE_DIR = str(settings.BASE_DIR)
+
+
+class AutoDeploySettingsException(Exception):
+    pass
 
 
 if platform not in ("linux", "linux2"):
@@ -25,8 +31,8 @@ if platform not in ("linux", "linux2"):
 
 def check_deploy_settings():
     if not hasattr(settings, "DJANGO_PORT"):
-        error_msg = "DJANGO_PORT must be set"
-        raise ValueError(error_msg)
+        error_msg = "Auto deploy exception: DJANGO_PORT must be set"
+        raise AutoDeploySettingsException(error_msg)
 
 
 def get_unix_group():
@@ -71,47 +77,16 @@ def config_hypercorn():
         raise
 
 
-def create_activate_env():
-    activate_script = PYTHON_ENV_PATH / "bin" / "activate"
-    try:
-        if not PYTHON_ENV_PATH.exists():
-            python_path = str(Path("/usr/bin/python3").resolve())
-            subprocess.run(
-                [python_path, "-m", "venv", str(PYTHON_ENV_PATH.resolve())],
-                check=True,
-                cwd="/",
-            )
-        activate_cmd = f"{activate_script} && echo 'Environment activated 🚀'"
-        activate_cmd = [
-            "/bin/bash",
-            "-c",
-            f"source {str(activate_script.resolve())}",
-        ]
-        subprocess.run(
-            activate_cmd,
-            check=True,
-            capture_output=True,
-            cwd="/",
-            shell=False,
-        )
-        logger.info("Environment activated 🚀")
-    except subprocess.CalledProcessError as exc:
-        logger.error("Failed to initialize virtual environnment : %s", exc, exc_info=1)
-    except BaseException as exc:
-        logging.exception("Unexpected error %s", exc)
-
-
 def install_requirement():
-    pip_path = str(Path("/usr/bin/pip3").resolve())
     requirement_file_path = CONFIG_DIR / "requirements.txt"
     if not requirement_file_path.exists():
         error_msg = "requirements.txt file does not exist"
         raise FileNotFoundError(error_msg)
     try:
-        res = subprocess.run(
-            [pip_path, "install", "-r", str(requirement_file_path.resolve())],
-            check=True,
+        command = f"cd {BASE_DIR} && python3 -m venv venv && ./venv/bin/pip install -r {CONFIG_DIR}".split(
+            " ",
         )
+        res = subprocess.run(command, check=True)
         if res.returncode != 0:
             error_msg = f"cmd failed: stdout={res.stdout}\nstderr={res.stderr}"
             raise RuntimeError(error_msg)
@@ -120,37 +95,75 @@ def install_requirement():
         logger.error("Failed to install python packages: %s", exc, exc_info=1)
 
 
+def check_python_installation():
+    try:
+        check_call("/usr/bin/python3 --version")
+    except CalledProcessError:
+        command = [
+            "apt",
+            "update",
+            "&&",
+            "sudo",
+            "apt",
+            "install",
+            "-y",
+            "python3",
+            "python3-venv",
+        ]
+        subprocess.run(command, check=True)
+
+
+def create_user(user: str = "app") -> str | None:
+    try:
+        pwd.getpwnam(user)
+        return user
+    except KeyError:
+        command = f"sudo useradd -m -s /bin/bash {user} && sudo chown -R {user}:{user} {BASE_DIR}".split(
+            " ",
+        )
+        with contextlib.suppress(CalledProcessError):
+            subprocess.run(command, check=True)
+            return user
+
+
 def hypercorn_service(
     django_project_name: Union[str, None] = DJANGO_PROJECT_NAME,
     unix_group: str = UNIX_GROUP,
     unix_user: str = UNIX_USER,
     project_path: str = BASE_DIR,
 ):
-    hypercorn_path = PYTHON_ENV_PATH / "bin" / "hypercorn"
+    hypercorn_path = BASE_DIR / "venv/bin/hypercorn"
     hypercorn_conf_path = SYSTEM_PATH / "hypercorn.service"
-    if not hypercorn_conf_path.exists():
+
+    if hypercorn_conf_path.exists():
+        logger.info("hypercorn config file detected...")
+    else:
+        user_group = create_user() or unix_group
+        user = create_user() or unix_user
         logger.info("creating hypercorn config file...")
         config = f"""
-        [Unit]
-        Description=hypercorn server instance
-        After=network.target
+            [Unit]
+            Description=hypercorn server instance
+            After=network.target
 
-        [Service]
-        User={unix_user}
-        Group={unix_group}
-        WorkingDirectory={project_path}
-        ExecStart={hypercorn_path} {django_project_name}.asgi:application --config config/hypercorn.toml
+            [Service]
+            User={user}
+            Group={user_group}
+            WorkingDirectory={project_path}
+            ExecStart={hypercorn_path} {django_project_name}.asgi:application --config config/hypercorn.toml
+            Restart=always
 
-        [Install]
-        WantedBy=multi-user.target
-        """
-        with Path(hypercorn_conf_path).open("w") as file:
+            [Install]
+            WantedBy=multi-user.target
+            """
+
+        with Path(hypercorn_conf_path).open("w+") as file:
             file.write(config)
             logger.info("hypercorn config file created successfully...")
-        logger.info("hypercorn config file detected...")
 
 
 def setup_health_cron_tab():
+    # TO DO
     pass
 
 
